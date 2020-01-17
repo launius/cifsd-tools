@@ -206,6 +206,18 @@ static struct nla_policy cifsd_nl_policy[CIFSD_EVENT_MAX] = {
 		.minlen = sizeof(struct cifsd_tree_disconnect_request),
 	},
 
+	[CIFSD_EVENT_NOTIFY_REQUEST] = {
+		.minlen = sizeof(struct cifsd_notify_request),
+	},
+	
+	[CIFSD_EVENT_NOTIFY_RESPONSE] = {
+		.minlen = sizeof(struct cifsd_notify_response),
+	},
+
+	[CIFSD_EVENT_NOTIFY_CANCEL_REQUEST] = {
+		.minlen = sizeof(struct cifsd_notify_cancel_request),
+	},
+
 	[CIFSD_EVENT_LOGOUT_REQUEST] = {
 		.minlen = sizeof(struct cifsd_logout_request),
 	},
@@ -282,6 +294,24 @@ static struct genl_cmd cifsd_genl_cmds[] = {
 	},
 	{
 		.c_id		= CIFSD_EVENT_TREE_DISCONNECT_REQUEST,
+		.c_attr_policy	= cifsd_nl_policy,
+		.c_msg_parser	= &handle_generic_event,
+		.c_maxattr	= CIFSD_EVENT_MAX,
+	},
+	{
+		.c_id		= CIFSD_EVENT_NOTIFY_REQUEST,
+		.c_attr_policy	= cifsd_nl_policy,
+		.c_msg_parser	= &handle_generic_event,
+		.c_maxattr	= CIFSD_EVENT_MAX,
+	},
+	{
+		.c_id		= CIFSD_EVENT_NOTIFY_RESPONSE,
+		.c_attr_policy	= cifsd_nl_policy,
+		.c_msg_parser	= &handle_unsupported_event,
+		.c_maxattr	= CIFSD_EVENT_MAX,
+	},
+	{
+		.c_id		= CIFSD_EVENT_NOTIFY_CANCEL_REQUEST,
 		.c_attr_policy	= cifsd_nl_policy,
 		.c_msg_parser	= &handle_generic_event,
 		.c_maxattr	= CIFSD_EVENT_MAX,

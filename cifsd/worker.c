@@ -17,6 +17,7 @@
 #include <management/user.h>
 #include <management/share.h>
 #include <management/tree_conn.h>
+#include <management/notify.h>
 
 #define MAX_WORKER_THREADS	4
 static GThreadPool *pool;
@@ -25,6 +26,16 @@ static GThreadPool *pool;
 	({							\
 		int ret = 1;					\
 		if (((m)->sz != sizeof(t))) {			\
+			pr_err("Bad message: %s\n", __func__);	\
+			ret = 0;				\
+		}						\
+		ret;						\
+	})
+
+#define VALID_IPC_MSG_VARIABLE(m,t,v) 		\
+	({							\
+		int ret = 1;					\
+		if (((m)->sz != sizeof(t) + v)) {		\
 			pr_err("Bad message: %s\n", __func__);	\
 			ret = 0;				\
 		}						\
@@ -129,6 +140,87 @@ static int tree_disconnect_request(struct cifsd_ipc_msg *msg)
 	return 0;
 }
 
+static int notify_request(struct cifsd_ipc_msg *msg)
+{
+	struct cifsd_notify_request *req;
+	struct cifsd_notify_response *resp;
+	struct cifsd_notify_event *events;
+	struct cifsd_ipc_msg *resp_msg;
+	int ret = 0;
+
+	req = CIFSD_IPC_MSG_PAYLOAD(msg);
+
+	if (!VALID_IPC_MSG_VARIABLE(msg, struct cifsd_notify_request, req->path_len + 1)) {
+		ret = -EINVAL;
+		goto err_out;
+	}
+
+	events = notimgr_handle_notify_request(req);
+	if (events) {
+		if (events->outdata_len < 0) {
+			notimgr_build_notify_response(NULL, events);
+			ret = -EINTR;
+			goto err_out;
+		}
+
+		resp_msg = ipc_msg_alloc(sizeof(*resp) + events->outdata_len);
+		if (!resp_msg) {
+			ret -ENOMEM;
+			goto err_out;
+		}
+
+		resp_msg->type = CIFSD_EVENT_NOTIFY_RESPONSE;
+		resp = CIFSD_IPC_MSG_PAYLOAD(resp_msg);
+
+		resp->handle = req->handle;
+		notimgr_build_notify_response(resp, events);
+		resp->status = CIFSD_NOTIFY_STATUS_OK;
+
+		goto out;
+	}
+
+err_out:
+	resp_msg = ipc_msg_alloc(sizeof(*resp));
+	
+	resp_msg->type = CIFSD_EVENT_NOTIFY_RESPONSE;
+	resp = CIFSD_IPC_MSG_PAYLOAD(resp_msg);
+	resp->handle = req->handle;
+
+	switch (ret) {
+	case -EINVAL:
+		resp->status = CIFSD_NOTIFY_STATUS_INVALID_PARAMETER;
+		break;
+	case -ENOMEM:
+		resp->status = CIFSD_NOTIFY_STATUS_NO_MEMORY;
+		break;
+	case -EINTR:
+		resp->status = CIFSD_NOTIFY_STATUS_INTERRUPTED;
+		break;
+	default:
+		resp->status = CIFSD_NOTIFY_STATUS_ERROR;
+		break;
+	}
+	
+out:
+	ipc_msg_send(resp_msg);
+	ipc_msg_free(resp_msg);
+
+	return ret;
+}
+
+static int notify_cancel_request(struct cifsd_ipc_msg *msg)
+{
+	struct cifsd_notify_cancel_request *req;
+
+	if (!VALID_IPC_MSG(msg, struct cifsd_notify_cancel_request))
+		return -EINVAL;
+
+	req = CIFSD_IPC_MSG_PAYLOAD(msg);
+	notimgr_handle_notify_cancel_request(req->handle);
+
+	return 0;
+}
+
 static int logout_request(struct cifsd_ipc_msg *msg)
 {
 	if (!VALID_IPC_MSG(msg, struct cifsd_logout_request))
@@ -208,6 +300,14 @@ static void worker_pool_fn(gpointer event, gpointer user_data)
 
 	case CIFSD_EVENT_TREE_DISCONNECT_REQUEST:
 		tree_disconnect_request(msg);
+		break;
+
+	case CIFSD_EVENT_NOTIFY_REQUEST:
+		notify_request(msg);
+		break;
+
+	case CIFSD_EVENT_NOTIFY_CANCEL_REQUEST:
+		notify_cancel_request(msg);
 		break;
 
 	case CIFSD_EVENT_LOGOUT_REQUEST:
